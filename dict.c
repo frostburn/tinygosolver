@@ -22,6 +22,10 @@ typedef struct lin_dict
     size_t *keys;
 } lin_dict;
 
+int popcountll(slot_t slot) {
+    return __builtin_popcountll(slot);
+}
+
 void init_dict(dict *d, size_t max_key) {
     size_t num_slots = max_key >> 6;
     num_slots += 1;  // FIXME
@@ -62,14 +66,15 @@ size_t next_key(dict *d, size_t last) {
 }
 
 size_t key_index(dict *d, size_t key) {
-    if (key == 0) {
-        assert(test_key(d, key));
-        return 0;
-    }
     size_t index = 0;
-    do {
-        index += test_key(d, key--);
-    } while (key > 0);
+    size_t slot_index = 0;
+    while (key >= 64) {
+        index += popcountll(d->slots[slot_index++]);
+        key -= 64;
+    }
+    while (key) {
+        index += !!(d->slots[slot_index] & (1ULL << --key));
+    }
     return index;
 }
 
@@ -123,13 +128,15 @@ size_t lin_key_index(lin_dict *ld, size_t key) {
 int main() {
     dict d_;
     dict *d = &d_;
-    init_dict(d, 10);
+    init_dict(d, 20);
     add_key(d, 6);
     add_key(d, 11);
     resize_dict(d, 200);
+    add_key(d, 198);
     printf("%lld\n", test_key(d, 6));
     printf("%zu\n", next_key(d, 6));
     printf("%zu\n", key_index(d, 11));
+    printf("%zu\n", key_index(d, 198));
     printf("%zu\n", num_keys(d));
 
     lin_dict ld_ = {0, 0, NULL};
