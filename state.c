@@ -83,7 +83,7 @@ void print_state(state *s) {
             printf("\n");
         }
     }
-    printf("\n");
+    printf(" passes = %d\n", s->passes);
 }
 
 

@@ -96,7 +96,7 @@ size_t key_index(dict *d, size_t key) {
 size_t num_keys(dict *d) {
     size_t num = 0;
     size_t key = 0;
-    while (key < d->max_key){
+    while (key <= d->max_key){
         if (test_key(d, key)){
             num++;
         }
