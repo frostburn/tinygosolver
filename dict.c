@@ -87,9 +87,7 @@ size_t key_index(dict *d, size_t key) {
         index += popcountll(d->slots[slot_index++]);
         key -= 64;
     }
-    while (key) {
-        index += !!(d->slots[slot_index] & (1ULL << --key));
-    }
+    index += popcountll(((1ULL << key) - 1) & d->slots[slot_index]);
     return index;
 }
 
