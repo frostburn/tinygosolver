@@ -12,6 +12,7 @@ typedef struct dict
     size_t num_slots;
     size_t max_key;
     slot_t *slots;
+    size_t *checkpoints;
 } dict;
 
 
@@ -45,6 +46,17 @@ void resize_dict(dict *d, size_t max_key) {
     d->max_key = max_key;
 }
 
+void finalize_dict(dict *d) {
+    d->checkpoints = malloc(((d->num_slots >> 4) + 1) * sizeof(size_t));  // FIXME
+    size_t checkpoint = 0;
+    for (size_t i = 0; i < d->num_slots; i++) {
+        if (!(i & 0xf)) {
+            d->checkpoints[i >> 4] = checkpoint;
+        }
+        checkpoint += popcountll(d->slots[i]);
+    }
+}
+
 void add_key(dict *d, size_t key) {
     slot_t bit = key & 0xFFFFULL;
     key >>= 6;
@@ -68,6 +80,9 @@ size_t next_key(dict *d, size_t last) {
 size_t key_index(dict *d, size_t key) {
     size_t index = 0;
     size_t slot_index = 0;
+    index += d->checkpoints[key >> 10];
+    slot_index = (key >> 10) << 4;
+    key &= 0x3ff;
     while (key >= 64) {
         index += popcountll(d->slots[slot_index++]);
         key -= 64;
@@ -123,27 +138,30 @@ size_t lin_key_index(lin_dict *ld, size_t key) {
     assert(0);
 }
 
-
-/*
+#ifndef MAIN
 int main() {
     dict d_;
     dict *d = &d_;
     init_dict(d, 20);
     add_key(d, 6);
     add_key(d, 11);
-    resize_dict(d, 200);
+    resize_dict(d, 2000);
     add_key(d, 198);
-    printf("%lld\n", test_key(d, 6));
-    printf("%zu\n", next_key(d, 6));
-    printf("%zu\n", key_index(d, 11));
-    printf("%zu\n", key_index(d, 198));
-    printf("%zu\n", num_keys(d));
+    add_key(d, 1777);
+    finalize_dict(d);
+    printf("%zu, 3\n", d->checkpoints[1]);
+    printf("%lld, 1\n", test_key(d, 6));
+    printf("%zu, 11\n", next_key(d, 6));
+    printf("%zu, 1\n", key_index(d, 11));
+    printf("%zu, 2\n", key_index(d, 198));
+    printf("%zu, 3\n", key_index(d, 1777));
+    printf("%zu, 4\n", num_keys(d));
 
     lin_dict ld_ = {0, 0, NULL};
     lin_dict *ld = &ld_;
     add_lin_key(ld, 666);
     add_lin_key(ld, 777);
-    printf("%zu\n", lin_key_index(ld, 777));
+    printf("%zu, 1\n", lin_key_index(ld, 777));
     return 0;
 }
-*/
+#endif

@@ -1,6 +1,7 @@
 #include <stdio.h>
 
 // No headers? Are you serious?!
+#define MAIN
 #include "state.c"
 #include "dict.c"
 
@@ -64,7 +65,7 @@ int equal(node_value a, node_value b) {
 }
 
 int main() {
-    state s_ = (state) {rectangle(3, 3), 0, 0, 0, 0};
+    state s_ = (state) {rectangle(4, 3), 0, 0, 0, 0};
     state *s = &s_;
 
     dict d_;
@@ -93,6 +94,7 @@ int main() {
         }
     }
     resize_dict(d, key_max);
+    finalize_dict(d);
     size_t num_states = num_keys(d);
 
     printf("Total legal positions %zu\n", total_legal);
