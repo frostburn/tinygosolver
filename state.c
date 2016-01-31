@@ -370,7 +370,7 @@ void canonize(state *s) {
         *s = *temp;
     }
 
-    if (s->playing_area == s_mirror_d(s->playing_area) && 0) {
+    if (s->playing_area == s_mirror_d(s->playing_area)) {
         mirror_d(temp);
         if (less_than(temp, s)) {
             *s = *temp;

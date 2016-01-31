@@ -93,12 +93,8 @@ size_t key_index(dict *d, size_t key) {
 
 size_t num_keys(dict *d) {
     size_t num = 0;
-    size_t key = 0;
-    while (key <= d->max_key){
-        if (test_key(d, key)){
-            num++;
-        }
-        key++;
+    for (size_t i = 0; i < d->num_slots; i++) {
+        num += popcountll(d->slots[i]);
     }
     return num;
 }
@@ -127,13 +123,26 @@ void add_lin_key(lin_dict *ld, size_t key) {
     ld->keys[ld->num_keys++] = key;
 }
 
-size_t lin_key_index(lin_dict *ld, size_t key) {
-    for (size_t i = 0; i < ld->num_keys; i++) {
-        if (key == ld->keys[i]) {
-            return i;
-        }
+
+int _compar(const void *a_, const void *b_) {
+    size_t a = *((size_t*) a_);
+    size_t b = *((size_t*) b_);
+    if (a < b) {
+        return -1;
     }
-    assert(0);
+    else if (a > b) {
+        return 1;
+    }
+    return 0;
+}
+
+size_t lin_key_index(lin_dict *ld, size_t key) {
+    void *result = bsearch(&key, (void*) ld->keys, ld->num_keys, sizeof(size_t), _compar);
+    return ((size_t*) result) - ld->keys;
+}
+
+void finalize_lin_dict(lin_dict *ld) {
+    qsort((void*) ld->keys, ld->num_keys, sizeof(size_t), _compar);
 }
 
 #ifndef MAIN

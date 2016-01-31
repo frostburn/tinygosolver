@@ -1,4 +1,6 @@
 #include <stdio.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 // No headers? Are you serious?!
@@ -7,7 +9,7 @@
 #include "dict.c"
 
 // Where's the makefile? Oh, you gotta be kidding me.
-// gcc -std=gnu99 -O3 solver.c; ./a.out
+// gcc -std=gnu99 -Wall -O3 solver.c; ./a.out 4 4
 
 #define VALUE_MIN (-127)
 #define VALUE_MAX (127)
@@ -196,8 +198,31 @@ void iterate(
 }
 
 
-int main() {
-    state s_ = (state) {rectangle(5, 2), 0, 0, 0, 0};
+int main(int argc, char *argv[]) {
+    if (argc != 3) {
+        printf("Usage: %s width height\n", argv[0]);
+        return 0;
+    }
+    int width = atoi(argv[1]);
+    int height = atoi(argv[2]);
+    if (width <= 0) {
+        printf("Width must be larger than 0.\n");
+        return 0;
+    }
+    if (width >= 7) {
+        printf("Width must be less than 7.\n");
+        return 0;
+    }
+    if (height <= 0) {
+        printf("Height must be larger than 0.\n");
+        return 0;
+    }
+    if (height >= 6) {
+        printf("Height must be less than 6.\n");
+        return 0;
+    }
+
+    state s_ = (state) {rectangle(width, height), 0, 0, 0, 0};
     state *s = &s_;
 
     dict d_;
@@ -264,6 +289,8 @@ int main() {
         }
     }
 
+    finalize_lin_dict(ko_ld);
+
     node_value *ko_nodes = (node_value*) malloc(ko_ld->num_keys * sizeof(node_value));
     printf("Unique positions with ko %zu\n", ko_ld->num_keys);
 
@@ -277,6 +304,54 @@ int main() {
         base_nodes, pass_nodes, ko_nodes, leaf_nodes,
         s, key_min, key_max, 0
     );
+
+    char dir_name[16];
+    sprintf(dir_name, "%dx%d", width, height);
+    struct stat sb;
+    if (stat(dir_name, &sb) == -1) {
+        mkdir(dir_name, 0700);
+    }
+    chdir(dir_name);
+    FILE *f;
+
+    f = fopen("d_slots.dat", "wb");
+    fwrite((void*) d->slots, sizeof(slot_t), d->num_slots, f);
+    fclose(f);
+    f = fopen("d_checkpoints.dat", "wb");
+    fwrite((void*) d->checkpoints, sizeof(size_t), (d->num_slots >> 4) + 1, f);
+    fclose(f);
+    f = fopen("ko_ld_keys.dat", "wb");
+    fwrite((void*) ko_ld->keys, sizeof(size_t), ko_ld->num_keys, f);
+    fclose(f);
+
+    f = fopen("base_nodes.dat", "wb");
+    fwrite((void*) base_nodes, sizeof(node_value), num_states, f);
+    fclose(f);
+    f = fopen("pass_nodes.dat", "wb");
+    fwrite((void*) pass_nodes, sizeof(node_value), num_states, f);
+    fclose(f);
+    f = fopen("leaf_nodes.dat", "wb");
+    fwrite((void*) leaf_nodes, sizeof(value_t), num_states, f);
+    fclose(f);
+    f = fopen("ko_nodes.dat", "wb");
+    fwrite((void*) ko_nodes, sizeof(node_value), ko_ld->num_keys, f);
+    fclose(f);
+
+
+    /*
+    f = fopen("base_nodes.dat", "rb");
+    fread((void*) base_nodes, sizeof(node_value), num_states, f);
+    fclose(f);
+    f = fopen("pass_nodes.dat", "rb");
+    fread((void*) pass_nodes, sizeof(node_value), num_states, f);
+    fclose(f);
+    f = fopen("leaf_nodes.dat", "rb");
+    fread((void*) leaf_nodes, sizeof(value_t), num_states, f);
+    fclose(f);
+    f = fopen("ko_nodes.dat", "rb");
+    fread((void*) ko_nodes, sizeof(node_value), ko_ld->num_keys, f);
+    fclose(f);
+    */
 
     // Japanese leaf state calculation.
     state new_s_;
@@ -357,6 +432,19 @@ int main() {
         base_nodes, pass_nodes, ko_nodes, leaf_nodes,
         s, key_min, key_max, 1
     );
+
+    f = fopen("base_nodes_j.dat", "wb");
+    fwrite((void*) base_nodes, sizeof(node_value), num_states, f);
+    fclose(f);
+    f = fopen("pass_nodes_j.dat", "wb");
+    fwrite((void*) pass_nodes, sizeof(node_value), num_states, f);
+    fclose(f);
+    f = fopen("leaf_nodes_j.dat", "wb");
+    fwrite((void*) leaf_nodes, sizeof(value_t), num_states, f);
+    fclose(f);
+    f = fopen("ko_nodes_j.dat", "wb");
+    fwrite((void*) ko_nodes, sizeof(node_value), ko_ld->num_keys, f);
+    fclose(f);
 
     return 0;
 }
