@@ -70,11 +70,12 @@ slot_t test_key(dict *d, size_t key) {
 }
 
 size_t next_key(dict *d, size_t last) {
-    while(1) {
+    while(last < d->max_key) {
         if (test_key(d, ++last)) {
             return last;
         }
     }
+    return last;
 }
 
 size_t key_index(dict *d, size_t key) {
