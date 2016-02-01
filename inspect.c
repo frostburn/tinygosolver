@@ -10,7 +10,7 @@
 #include "node.c"
 
 // Where's the makefile? Oh, you gotta be kidding me.
-// gcc -std=gnu99 -Wall -O3 inspect.c; ./a.out 4 4
+// gcc -std=gnu99 -Wall -O3 inspect.c -o inspect; inspect 4 4
 
 #define PRISONER_VALUE (2)
 

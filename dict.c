@@ -20,6 +20,7 @@ typedef struct lin_dict
 {
     size_t num_keys;
     size_t size;
+    size_t sorted_size;
     size_t *keys;
 } lin_dict;
 
@@ -28,7 +29,7 @@ int popcountll(slot_t slot) {
 }
 
 void init_dict(dict *d, size_t max_key) {
-    size_t num_slots = max_key >> 6;
+    size_t num_slots = max_key / 64;
     num_slots += 1;  // FIXME
     d->slots = (slot_t*) calloc(num_slots, sizeof(slot_t));
     d->num_slots = num_slots;
@@ -36,7 +37,7 @@ void init_dict(dict *d, size_t max_key) {
 }
 
 void resize_dict(dict *d, size_t max_key) {
-    size_t num_slots = max_key >> 6;
+    size_t num_slots = max_key / 64;
     num_slots += 1; // FIXME
     d->slots = (slot_t*) realloc(d->slots, sizeof(slot_t) * num_slots);
     if (num_slots > d->num_slots) {
@@ -47,25 +48,25 @@ void resize_dict(dict *d, size_t max_key) {
 }
 
 void finalize_dict(dict *d) {
-    d->checkpoints = malloc(((d->num_slots >> 4) + 1) * sizeof(size_t));  // FIXME
+    d->checkpoints = malloc(((d->num_slots / 16) + 1) * sizeof(size_t));  // FIXME
     size_t checkpoint = 0;
     for (size_t i = 0; i < d->num_slots; i++) {
-        if (!(i & 0xf)) {
-            d->checkpoints[i >> 4] = checkpoint;
+        if (i % 16 == 0) {
+            d->checkpoints[i / 16] = checkpoint;
         }
         checkpoint += popcountll(d->slots[i]);
     }
 }
 
 void add_key(dict *d, size_t key) {
-    slot_t bit = key & 0xFFFFULL;
-    key >>= 6;
+    slot_t bit = key % 64;
+    key /= 64;
     d->slots[key] |= 1ULL << bit;
 }
 
 slot_t test_key(dict *d, size_t key) {
-    slot_t bit = key & 0xFFFFULL;
-    key >>= 6;
+    slot_t bit = key % 64;
+    key /= 64;
     return !!(d->slots[key] & (1ULL << bit));
 }
 
@@ -78,12 +79,20 @@ size_t next_key(dict *d, size_t last) {
     return last;
 }
 
+size_t key_index_alt(dict *d, size_t key) {
+    size_t index = 0;
+    for (size_t i = 0; i < key; i++) {
+        index += test_key(d, i);
+    }
+    return index;
+}
+
 size_t key_index(dict *d, size_t key) {
     size_t index = 0;
     size_t slot_index = 0;
-    index += d->checkpoints[key >> 10];
-    slot_index = (key >> 10) << 4;
-    key &= 0x3ff;
+    index += d->checkpoints[key / 1024];
+    slot_index = (key / 1024) * 16;
+    key %= 1024;
     while (key >= 64) {
         index += popcountll(d->slots[slot_index++]);
         key -= 64;
@@ -100,8 +109,23 @@ size_t num_keys(dict *d) {
     return num;
 }
 
+int _compar(const void *a_, const void *b_) {
+    size_t a = *((size_t*) a_);
+    size_t b = *((size_t*) b_);
+    if (a < b) {
+        return -1;
+    }
+    else if (a > b) {
+        return 1;
+    }
+    return 0;
+}
+
 int test_lin_key(lin_dict *ld, size_t key) {
-    for (size_t i = 0; i < ld->num_keys; i++) {
+    if (bsearch(&key, (void*) ld->keys, ld->sorted_size, sizeof(size_t), _compar) != NULL) {
+        return 1;
+    }
+    for (size_t i = ld->sorted_size; i < ld->num_keys; i++) {
         if (ld->keys[i] == key) {
             return 1;
         }
@@ -115,26 +139,17 @@ void add_lin_key(lin_dict *ld, size_t key) {
     }
     if (!ld->size){
         ld->size = 8;
+        ld->sorted_size = 1;
         ld->keys = (size_t*) malloc(sizeof(size_t) * ld->size);
     }
     else if (ld->num_keys >= ld->size) {
-        ld->size <<= 1;
+        ld->sorted_size = ld->size;
+        qsort((void*) ld->keys, ld->sorted_size, sizeof(size_t), _compar);
+        ld->size = ld->size * 3;
+        ld->size >>= 1;
         ld->keys = (size_t*) realloc(ld->keys, sizeof(size_t) * ld->size);
     }
     ld->keys[ld->num_keys++] = key;
-}
-
-
-int _compar(const void *a_, const void *b_) {
-    size_t a = *((size_t*) a_);
-    size_t b = *((size_t*) b_);
-    if (a < b) {
-        return -1;
-    }
-    else if (a > b) {
-        return 1;
-    }
-    return 0;
 }
 
 size_t lin_key_index(lin_dict *ld, size_t key) {
@@ -143,6 +158,7 @@ size_t lin_key_index(lin_dict *ld, size_t key) {
 }
 
 void finalize_lin_dict(lin_dict *ld) {
+    ld->keys = (size_t*) realloc(ld->keys, sizeof(size_t) * ld->num_keys);
     qsort((void*) ld->keys, ld->num_keys, sizeof(size_t), _compar);
 }
 
@@ -160,12 +176,12 @@ int main() {
     printf("%zu, 3\n", d->checkpoints[1]);
     printf("%lld, 1\n", test_key(d, 6));
     printf("%zu, 11\n", next_key(d, 6));
-    printf("%zu, 1\n", key_index(d, 11));
-    printf("%zu, 2\n", key_index(d, 198));
-    printf("%zu, 3\n", key_index(d, 1777));
+    printf("%zu, %zu, 1\n", key_index(d, 11), key_index_alt(d, 11));
+    printf("%zu, %zu, 2\n", key_index(d, 198), key_index_alt(d, 198));
+    printf("%zu, %zu, 3\n", key_index(d, 1777), key_index_alt(d, 1777));
     printf("%zu, 4\n", num_keys(d));
 
-    lin_dict ld_ = {0, 0, NULL};
+    lin_dict ld_ = {0, 0, 0, NULL};
     lin_dict *ld = &ld_;
     add_lin_key(ld, 666);
     add_lin_key(ld, 777);

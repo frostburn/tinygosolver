@@ -10,7 +10,7 @@
 #include "node.c"
 
 // Where's the makefile? Oh, you gotta be kidding me.
-// gcc -std=gnu99 -Wall -O3 solver.c; ./a.out 4 4
+// gcc -std=gnu99 -Wall -O3 solver.c -o solver; solver 4 4
 
 #define PRISONER_VALUE (2)
 
@@ -240,7 +240,7 @@ int main(int argc, char *argv[]) {
     node_value *pass_nodes = (node_value*) malloc(num_states * sizeof(node_value));
     value_t *leaf_nodes = (value_t*) malloc(num_states * sizeof(value_t));
 
-    lin_dict ko_ld_ = (lin_dict) {0, 0, NULL};
+    lin_dict ko_ld_ = (lin_dict) {0, 0, 0, NULL};
     lin_dict *ko_ld = &ko_ld_;
 
     state child_;
