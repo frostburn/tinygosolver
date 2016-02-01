@@ -24,6 +24,12 @@ typedef struct lin_dict
     size_t *keys;
 } lin_dict;
 
+typedef struct vertex
+{
+    void *left;
+    void *right;
+} vertex;
+
 int popcountll(slot_t slot) {
     return __builtin_popcountll(slot);
 }
@@ -162,6 +168,73 @@ void finalize_lin_dict(lin_dict *ld) {
     qsort((void*) ld->keys, ld->num_keys, sizeof(size_t), _compar);
 }
 
+void* btree_get(vertex *root, int depth, size_t key) {
+    for (int i = depth - 1; i >= 0; i--) {
+        if (root == NULL) {
+            return NULL;
+        }
+        if ((key >> i) & 1ULL) {
+            root = (vertex*) (root->right);
+        }
+        else {
+            root = (vertex*) (root->left);
+        }
+    }
+    return root;
+}
+
+void* btree_set(vertex *root, int depth, size_t key, void *value, int protected) {
+    for (int i = depth - 1; i > 0; i--) {
+        if ((key >> i) & 1ULL) {
+            if (root->right == NULL) {
+                root->right = calloc(1, sizeof(vertex));
+            }
+            root = (vertex*) (root->right);
+        }
+        else {
+            if (root->left == NULL) {
+                root->left = calloc(1, sizeof(vertex));
+            }
+            root = (vertex*) (root->left);
+        }
+    }
+    void *old_value;
+    if (key & 1ULL) {
+        old_value = root->right;
+        if (!protected || root->right == NULL) {
+            root->right = value;
+        }
+    }
+    else {
+        old_value = root->left;
+        if (!protected || root->left == NULL) {
+            root->left = value;
+        }
+    }
+    return old_value;
+}
+
+void btree_traverse(vertex *root, int depth, size_t key, void visit(size_t key, void *value)) {
+    if (root == NULL) {
+        return;
+    }
+    if (depth == 0) {
+        visit(key, root);
+        return;
+    }
+    btree_traverse(root->left, depth - 1, 2 * key, visit);
+    btree_traverse(root->right, depth - 1, 2 * key + 1, visit);
+}
+
+size_t btree_num_keys(vertex *root, int depth) {
+    size_t keys = 0;
+    void visit(size_t key, void *value) {
+        keys++;
+    }
+    btree_traverse(root, depth, 0, visit);
+    return keys;
+}
+
 #ifndef MAIN
 int main() {
     dict d_;
@@ -186,6 +259,39 @@ int main() {
     add_lin_key(ld, 666);
     add_lin_key(ld, 777);
     printf("%zu, 1\n", lin_key_index(ld, 777));
+
+    vertex v_ = {NULL, NULL};
+    vertex *v = &v_;
+    int depth = 3;
+
+    double val0 = 3.14;
+    double val3 = 2.6;
+    double true_val3 = 2.7;
+    double val6 = 1.4;
+    double not_val6 = 6.9;
+    double result;
+
+    assert(btree_set(v, depth, 0, (void*) &val0, 0) == NULL);
+    assert(btree_set(v, depth, 3, (void*) &val3, 0) == NULL);
+    assert(btree_set(v, depth, 3, (void*) &true_val3, 0) != NULL);
+    assert(btree_set(v, depth, 6, (void*) &val6, 1) == NULL);
+    assert(btree_set(v, depth, 6, (void*) &not_val6, 1) != NULL);
+    result = *((double*) btree_get(v, depth, 0));
+    printf("%g\n", result);
+    result = *((double*) btree_get(v, depth, 3));
+    printf("%g\n", result);
+    printf("%p\n", btree_get(v, depth, 1));
+    printf("%p\n", btree_get(v, depth, 2));
+
+    char name[] = "Simon";
+    void say(size_t key, void *value) {
+        double dvalue = *((double *) value);
+        printf("%s says that %zu holds the value of %g\n", name, key, dvalue);
+    }
+    btree_traverse(v, depth, 0, say);
+
+    printf("%zu\n", btree_num_keys(v, depth));
+
     return 0;
 }
 #endif
