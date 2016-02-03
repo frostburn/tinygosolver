@@ -31,6 +31,7 @@ typedef struct graph
     int num_moves;
     stones_t moves[STATE_SIZE + 1];
     state *root_state;
+    value_t max_score;
     int depth;
     vertex *root;
     size_t num_keys;
@@ -126,6 +127,7 @@ graph_value graph_get(graph *g, size_t key, graph_value default_) {
 
 void init_graph(graph *g, state *s) {
     g->root_state = s;
+    g->max_score = popcount(s->playing_area);
     g->num_moves = 1;
     g->moves[0] = 0;
     for (int i = 0; i < STATE_SIZE; i++) {
@@ -141,7 +143,7 @@ void init_graph(graph *g, state *s) {
         g->depth++;
     }
     g->root = (vertex*) calloc(1, sizeof(vertex));
-    graph_set(g, to_key(s) * KEY_MUL, (graph_value) {VALUE_MIN, VALUE_MAX, 0, 0}, 0);
+    graph_set(g, to_key(s) * KEY_MUL, (graph_value) {-g->max_score, g->max_score, 0, 0}, 0);
 }
 
 void from_key_g(state *s, size_t key) {
@@ -179,18 +181,19 @@ int negamax_node(graph *g, size_t key, graph_value old_v, int mode) {
         // return graph_set(g, key, (graph_value) {score, score, 1, 1}, 0);
     }
     graph_value v = (graph_value) {VALUE_MIN, VALUE_MIN, 1, 0};
+    state_info si = get_state_info(s);
     for (int i = 0; i < g->num_moves; i++) {
         *child = *s;
         graph_value child_v;
-        if (make_move(child, g->moves[i])) {
-            canonize(child);
+        if (make_move_plus(child, si, g->moves[i])) {
+            canonize_plus(child);
             size_t child_key = to_key_g(child);
             if (child->passes >= 2) {
-                value_t score = liberty_score(child);
+                value_t score = liberty_score_plus(child);
                 child_v = (graph_value) {score, score, 1, 1};
             }
             else {
-                child_v = graph_get(g, child_key, (graph_value) {VALUE_MIN, VALUE_MAX, 0, 0});
+                child_v = graph_get(g, child_key, (graph_value) {-g->max_score, g->max_score, 0, 0});
             }
             v = negamax_value(v, child_v);
         }
@@ -220,7 +223,6 @@ int negamax_graph(graph *g, int mode) {
 }
 
 void use_heuristic_move(graph *g) {
-    return;
     size_t n = g->num_moves;
     for (size_t i = 0; i < n - 1; i++) {
       size_t j = i + rand() / (RAND_MAX / (n - i) + 1);
@@ -239,14 +241,15 @@ void expand_node(graph *g, size_t key) {
     if (s->passes >= 2) {
         return;
     }
+    state_info si = get_state_info(s);
     for (int i = 0; i < g->num_moves; i++) {
         *child = *s;
-        if (make_move(child, g->moves[i])) {
-            canonize(child);
+        if (make_move_plus(child, si, g->moves[i])) {
+            canonize_plus(child);
             size_t child_key = to_key_g(child);
-            graph_value v = (graph_value) {VALUE_MIN, VALUE_MAX, 0, 0};
+            graph_value v = (graph_value) {-g->max_score, g->max_score, 0, 0};
             if (child->passes == 2){
-                value_t score = liberty_score(child);
+                value_t score = liberty_score_plus(child);
                 v = (graph_value) {score, score, 1, 1};
             }
             graph_set(g, child_key, v, 1);
@@ -272,7 +275,7 @@ int expand_state(graph *g, state *s, size_t key, graph_value v, int mode) {
         }
     }
     if (mode == 0) {
-        assert(v.low == VALUE_MIN);
+        //assert(v.low == VALUE_MIN);
     }
     else if (mode == 1) {
         // TODO: Find out why this fails.
@@ -290,10 +293,11 @@ int expand_state(graph *g, state *s, size_t key, graph_value v, int mode) {
         use_heuristic_move(g);
     }
     g->num_keys = 0;
+    state_info si = get_state_info(s);
     for (int i = 0; i < g->num_moves; i++) {
         *child = *s;
-        if (make_move(child, g->moves[i])) {
-            canonize(child);
+        if (make_move_plus(child, si, g->moves[i])) {
+            canonize_plus(child);
             size_t child_key = to_key_g(child);
             if (key_in_set(g, child_key)) {
                 continue;
@@ -303,7 +307,7 @@ int expand_state(graph *g, state *s, size_t key, graph_value v, int mode) {
                 //graph_set(g, child_key, (graph_value) {score, score, 1, 1}, 0);
                 continue;
             }
-            graph_value child_v = graph_get(g, child_key, (graph_value) {VALUE_MIN, VALUE_MAX, 0, 0});
+            graph_value child_v = graph_get(g, child_key, (graph_value) {-g->max_score, g->max_score, 0, 0});
             if (mode == 1) {
                 if (child_v.low > VALUE_MIN) {
                     continue;
@@ -346,7 +350,7 @@ int expand_state(graph *g, state *s, size_t key, graph_value v, int mode) {
 
 int expand(graph *g) {
     size_t key = to_key_g(g->root_state);
-    graph_value v = graph_get(g, key, (graph_value) {VALUE_MIN, VALUE_MAX, 0, 0});
+    graph_value v = graph_get(g, key, (graph_value) {-g->max_score, g->max_score, 0, 0});
     if (v.low == VALUE_MIN) {
         expand_state(g, g->root_state, key, v, 0);
     }
@@ -435,6 +439,8 @@ int main(int argc, char *argv[]) {
     state child_;
     state *child = &child_;
 
+    state_info si = get_state_info(s);
+
     graph g_;
     graph *g = &g_;
 
@@ -455,8 +461,8 @@ int main(int argc, char *argv[]) {
         for (int i = 0; i < g->num_moves; i++) {
             *child = *g->root_state;
             graph_value child_v;
-            if (make_move(child, g->moves[i])) {
-                canonize(child);
+            if (make_move_plus(child, si, g->moves[i])) {
+                canonize_plus(child);
                 size_t child_key = to_key_g(child);
                 if (key_in_set(g, child_key)) {
                     continue;
@@ -467,6 +473,8 @@ int main(int argc, char *argv[]) {
             }
         }
     }
+    print_state(g->root_state);
+    print_graph_node(graph_get(g, 0, dummy));
 
     /*
     printf("Initial keys %zu\n", btree_num_keys(g->root, g->depth));

@@ -152,6 +152,15 @@ stones_t east(stones_t stones) {
     return (stones & WEST_BLOCK) << H_SHIFT;
 }
 
+stones_t cross (stones_t stones) {
+    return (
+        ((stones & WEST_BLOCK) << H_SHIFT) |
+        ((stones >> H_SHIFT) & WEST_BLOCK) |
+        (stones << V_SHIFT) |
+        (stones >> V_SHIFT)
+    );
+}
+
 stones_t liberties (stones_t stones, stones_t empty) {
     return (
         ((stones & WEST_BLOCK) << H_SHIFT) |
@@ -393,13 +402,17 @@ void canonize(state *s) {
 int is_legal(state *s) {
     stones_t p;
     stones_t chain;
-    for (int i = 0; i < 32; i += 2) {
-        p = (1UL << i) | (1UL << (i + 1));
-        chain = flood(p, s->player);
+    stones_t player = s->player;
+    stones_t opponent = s->opponent;
+    for (int i = 0; i < STATE_SIZE; i += 2) {
+        p = 3UL << i;
+        chain = flood(p, player);
+        player ^= chain;
         if (chain && !liberties(chain, s->playing_area & ~s->opponent)) {
             return 0;
         }
-        chain = flood(p, s->opponent);
+        chain = flood(p, opponent);
+        opponent ^= chain;
         if (chain && !liberties(chain, s->playing_area & ~s->player)) {
             return 0;
         }
@@ -495,6 +508,9 @@ size_t max_key(state *s) {
     return key;
 }
 
+// What is up with the header allergy?
+#include "state_plus.c"
+
 #ifndef MAIN
 int main() {
     stones_t a = 0x19bf3315;
@@ -536,6 +552,9 @@ int main() {
 
     print_stones(0x30c30c3);
     print_stones(0x5145145);
+
+    state_plus_test();
+
     return 0;
 }
 #endif
