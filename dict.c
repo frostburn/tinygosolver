@@ -188,12 +188,14 @@ void* btree_set(vertex *root, int depth, size_t key, void *value, int protected)
         if ((key >> i) & 1ULL) {
             if (root->right == NULL) {
                 root->right = calloc(1, sizeof(vertex));
+                assert(root->right);
             }
             root = (vertex*) (root->right);
         }
         else {
             if (root->left == NULL) {
                 root->left = calloc(1, sizeof(vertex));
+                assert(root->left);
             }
             root = (vertex*) (root->left);
         }

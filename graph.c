@@ -16,20 +16,31 @@
 #define LEAF (2)
 #define KO_SHIFT (3)
 #define KEY_MUL (33)
-#define TAG (2)
+#define MAX_DEPTH (100)
+
+#define LOW_FINAL (1)
+#define HIGH_FINAL (2)
+#define PROVES_LOW (4)
+#define PROVES_HIGH (8)
+#define PROVES_HIGH_FINAL (16)
+#define PROVES_LOW_FINAL (32)
+#define TAG (128)
+
+static int* pattern3_weights;
+static int* pattern3_corner_weights;
+static int* pattern3_edge_weights;
 
 typedef struct graph_value
 {
     value_t low;
     value_t high;
-    char low_final;
-    char high_final;
+    unsigned char flags;
 } graph_value;
 
 typedef struct graph
 {
     int num_moves;
-    stones_t moves[STATE_SIZE + 1];
+    move_info move_infos[STATE_SIZE + 1];
     state *root_state;
     value_t max_score;
     int depth;
@@ -39,7 +50,30 @@ typedef struct graph
 } graph;
 
 void print_graph_node(graph_value v) {
-    printf("graph_node(%d, %d, %d, %d)\n", v.low, v.high, v.low_final, v.high_final);
+    printf("low = %d", v.low);
+    if (v.flags & LOW_FINAL) {
+        printf("f");
+    }
+    printf(" high = %d", v.high);
+    if (v.flags & HIGH_FINAL) {
+        printf("f");
+    }
+    if (v.flags & TAG) {
+        printf(" tagged");
+    }
+    if (v.flags & PROVES_LOW) {
+        printf(" p_low");
+    }
+    if (v.flags & PROVES_HIGH) {
+        printf(" p_high");
+    }
+    if (v.flags & PROVES_HIGH_FINAL) {
+        printf(" p_high_f");
+    }
+    if (v.flags & PROVES_LOW_FINAL) {
+        printf(" p_low_f");
+    }
+    printf("\n");
 }
 
 graph_value negamax_value(graph_value parent, graph_value child) {;
@@ -47,24 +81,39 @@ graph_value negamax_value(graph_value parent, graph_value child) {;
         parent.low = -child.high;
     }
     if (-child.low > parent.low) {
-        parent.low_final = parent.low_final && child.high_final;
+        // parent.low_final = parent.low_final && child.high_final;
+        if (parent.flags & LOW_FINAL) {
+            if (!(child.flags & HIGH_FINAL)) {
+                parent.flags ^= LOW_FINAL;
+            }
+        }
     }
     if (-child.low > parent.high) {
         parent.high = -child.low;
-        parent.high_final = child.low_final;
+        // parent.high_final = child.low_final;
+        parent.flags &= ~HIGH_FINAL;
+        if (child.flags & LOW_FINAL) {
+            parent.flags |= HIGH_FINAL;
+        }
     }
     else if (-child.low == parent.high){
-        parent.high_final = parent.high_final || child.low_final;
+        // parent.high_final = parent.high_final || child.low_final;
+        if (child.flags & LOW_FINAL) {
+            parent.flags |= HIGH_FINAL;
+        }
     }
     if (parent.high == VALUE_MAX) {
-        assert(!parent.high_final);
+        // assert(!parent.high_final);
+        assert(!(parent.flags & HIGH_FINAL));
     }
     if (parent.low == VALUE_MIN) {
-        assert(!parent.low_final);
+        // assert(!parent.low_final);
+        assert(!(parent.flags & LOW_FINAL));
     }
     if (parent.low == parent.high) {
-        parent.low_final = 1;
-        parent.high_final = 1;
+        // parent.low_final = 1;
+        // parent.high_final = 1;
+        parent.flags |= LOW_FINAL | HIGH_FINAL;
     }
     return parent;
 }
@@ -76,10 +125,13 @@ int inequal_g(graph_value a, graph_value b) {
     if (a.high != b.high) {
         return 1;
     }
-    if (a.low_final != b.low_final) {
-        return 2;
-    }
-    if (a.high_final != b.high_final) {
+    // if (a.low_final != b.low_final) {
+    //     return 2;
+    // }
+    // if (a.high_final != b.high_final) {
+    //     return 2;
+    // }
+    if ((a.flags ^ b.flags) & (LOW_FINAL | HIGH_FINAL)) {
         return 2;
     }
     return 0;
@@ -97,6 +149,7 @@ int key_in_set(graph *g, size_t key) {
 
 int graph_set(graph *g, size_t key, graph_value v, int protected) {
     graph_value *value = (graph_value*) malloc(sizeof(graph_value));
+    assert(value);
     *value = v;
     void *old_value = btree_set(g->root, g->depth, key, (void*) value, protected);
     if (protected) {
@@ -128,12 +181,49 @@ graph_value graph_get(graph *g, size_t key, graph_value default_) {
 void init_graph(graph *g, state *s) {
     g->root_state = s;
     g->max_score = popcount(s->playing_area);
+    g->max_score = VALUE_MAX;
     g->num_moves = 1;
-    g->moves[0] = 0;
+    g->move_infos[0] = (move_info) {0, -1, pass, 0, 0};
+    int width = 0;
+    int height = 0;
+    dimensions(s->playing_area, &width, &height);
+    width -= 1;
+    height -= 1;
     for (int i = 0; i < STATE_SIZE; i++) {
         stones_t move = 1ULL << i;
+        move_type type = center;
+        int x = i % WIDTH;
+        int y = i / WIDTH;
+        if (x == 0) {
+            if (y == 0) {
+                type = corner_nw;
+            }
+            else if (y == height) {
+                type = corner_sw;
+            }
+            else {
+                type = edge_w;
+            }
+        }
+        else if (x == width) {
+            if (y == 0) {
+                type = corner_ne;
+            }
+            else if (y == height) {
+                type = corner_se;
+            }
+            else {
+                type = edge_e;
+            }
+        }
+        else if (y == 0) {
+            type = edge_n;
+        }
+        else if (y == height) {
+            type = edge_s;
+        }
         if (move & s->playing_area) {
-            g->moves[g->num_moves++] = move;
+            g->move_infos[g->num_moves++] = (move_info) {move, i, type, 0, 0};
         }
     }
     size_t key_max = (max_key(s) + 1) * KEY_MUL;
@@ -143,7 +233,7 @@ void init_graph(graph *g, state *s) {
         g->depth++;
     }
     g->root = (vertex*) calloc(1, sizeof(vertex));
-    graph_set(g, to_key(s) * KEY_MUL, (graph_value) {-g->max_score, g->max_score, 0, 0}, 0);
+    graph_set(g, to_key(s) * KEY_MUL, (graph_value) {-g->max_score, g->max_score, 0}, 0);
 }
 
 void from_key_g(state *s, size_t key) {
@@ -180,20 +270,20 @@ int negamax_node(graph *g, size_t key, graph_value old_v, int mode) {
         // value_t score = liberty_score(s);
         // return graph_set(g, key, (graph_value) {score, score, 1, 1}, 0);
     }
-    graph_value v = (graph_value) {VALUE_MIN, VALUE_MIN, 1, 0};
+    graph_value v = (graph_value) {VALUE_MIN, VALUE_MIN, LOW_FINAL};
     state_info si = get_state_info(s);
     for (int i = 0; i < g->num_moves; i++) {
         *child = *s;
         graph_value child_v;
-        if (make_move_plus(child, si, g->moves[i])) {
+        if (make_move_plus(child, si, g->move_infos[i].move)) {
             canonize_plus(child);
             size_t child_key = to_key_g(child);
             if (child->passes >= 2) {
                 value_t score = liberty_score_plus(child);
-                child_v = (graph_value) {score, score, 1, 1};
+                child_v = (graph_value) {score, score, LOW_FINAL | HIGH_FINAL};
             }
             else {
-                child_v = graph_get(g, child_key, (graph_value) {-g->max_score, g->max_score, 0, 0});
+                child_v = graph_get(g, child_key, (graph_value) {-g->max_score, g->max_score, 0});
             }
             v = negamax_value(v, child_v);
         }
@@ -222,14 +312,18 @@ int negamax_graph(graph *g, int mode) {
     return changed;
 }
 
-void use_heuristic_move(graph *g) {
+void use_heuristic_move(graph *g, state *s) {
+#ifdef RANDOM_HEURISTIC
     size_t n = g->num_moves;
     for (size_t i = 0; i < n - 1; i++) {
       size_t j = i + rand() / (RAND_MAX / (n - i) + 1);
-      stones_t t = g->moves[j];
-      g->moves[j] = g->moves[i];
-      g->moves[i] = t;
+      move_info t = g->move_infos[j];
+      g->move_infos[j] = g->move_infos[i];
+      g->move_infos[i] = t;
     }
+#else
+    sort_move_infos(s, g->move_infos, g->num_moves, pattern3_weights, pattern3_corner_weights, pattern3_edge_weights);
+#endif
 }
 
 void expand_node(graph *g, size_t key) {
@@ -244,13 +338,13 @@ void expand_node(graph *g, size_t key) {
     state_info si = get_state_info(s);
     for (int i = 0; i < g->num_moves; i++) {
         *child = *s;
-        if (make_move_plus(child, si, g->moves[i])) {
+        if (make_move_plus(child, si, g->move_infos[i].move)) {
             canonize_plus(child);
             size_t child_key = to_key_g(child);
-            graph_value v = (graph_value) {-g->max_score, g->max_score, 0, 0};
+            graph_value v = (graph_value) {-g->max_score, g->max_score, 0};
             if (child->passes == 2){
                 value_t score = liberty_score_plus(child);
-                v = (graph_value) {score, score, 1, 1};
+                v = (graph_value) {score, score, LOW_FINAL | HIGH_FINAL};
             }
             graph_set(g, child_key, v, 1);
         }
@@ -260,12 +354,15 @@ void expand_node(graph *g, size_t key) {
 int add_tag(graph *g, size_t key) {
     graph_value *value;
     value = (graph_value*) btree_get(g->root, g->depth, key);
-    int tagged = value->low_final & TAG;
-    value->low_final |= TAG;
+    int tagged = value->flags & TAG;
+    value->flags |= TAG;
     return tagged;
 }
 
-int expand_state(graph *g, state *s, size_t key, graph_value v, int mode) {
+int expand_state(graph *g, state *s, size_t key, graph_value v, int mode, int depth) {
+    if (depth <= 0) {
+        return -1;
+    }
     //printf("%zu\n", key);
     //print_graph_node(v);
     assert(s->passes < 2);
@@ -290,13 +387,13 @@ int expand_state(graph *g, state *s, size_t key, graph_value v, int mode) {
     state child_;
     state *child = &child_;
     if (mode == 0 || mode == 2) {
-        use_heuristic_move(g);
+        use_heuristic_move(g, s);
     }
     g->num_keys = 0;
     state_info si = get_state_info(s);
     for (int i = 0; i < g->num_moves; i++) {
         *child = *s;
-        if (make_move_plus(child, si, g->moves[i])) {
+        if (make_move_plus(child, si, g->move_infos[i].move)) {
             canonize_plus(child);
             size_t child_key = to_key_g(child);
             if (key_in_set(g, child_key)) {
@@ -307,7 +404,7 @@ int expand_state(graph *g, state *s, size_t key, graph_value v, int mode) {
                 //graph_set(g, child_key, (graph_value) {score, score, 1, 1}, 0);
                 continue;
             }
-            graph_value child_v = graph_get(g, child_key, (graph_value) {-g->max_score, g->max_score, 0, 0});
+            graph_value child_v = graph_get(g, child_key, (graph_value) {-g->max_score, g->max_score, 0});
             if (mode == 1) {
                 if (child_v.low > VALUE_MIN) {
                     continue;
@@ -318,12 +415,12 @@ int expand_state(graph *g, state *s, size_t key, graph_value v, int mode) {
                     continue;
                 }
             }
-            else if (mode == 3) {
-                if (child_v.high_final || -child_v.low < v.low) {
-                    // TODO: Find out why this fails.
-                    //continue;
-                }
-            }
+            // else if (mode == 3) {
+            //     if (child_v.high_final || -child_v.low < v.low) {
+            //         // TODO: Find out why this fails.
+            //         // continue;
+            //     }
+            // }
             if (!graph_set(g, child_key, child_v, 1)) {
                 int child_mode = -1;
                 if (mode == 0) {
@@ -338,7 +435,7 @@ int expand_state(graph *g, state *s, size_t key, graph_value v, int mode) {
                 else if (mode == 3) {
                     child_mode = 2;
                 }
-                int loops = expand_state(g, child, child_key, child_v, child_mode);
+                int loops = expand_state(g, child, child_key, child_v, child_mode, depth - 1);
                 if ((mode == 0 || mode == 2) && !loops) {
                     break;
                 }
@@ -350,24 +447,24 @@ int expand_state(graph *g, state *s, size_t key, graph_value v, int mode) {
 
 int expand(graph *g) {
     size_t key = to_key_g(g->root_state);
-    graph_value v = graph_get(g, key, (graph_value) {-g->max_score, g->max_score, 0, 0});
+    graph_value v = graph_get(g, key, (graph_value) {-g->max_score, g->max_score, 0});
     if (v.low == VALUE_MIN) {
-        expand_state(g, g->root_state, key, v, 0);
+        expand_state(g, g->root_state, key, v, 0, MAX_DEPTH);
     }
     else if (v.high == VALUE_MAX) {
-        expand_state(g, g->root_state, key, v, 1);
+        expand_state(g, g->root_state, key, v, 1, MAX_DEPTH);
     }
-    else if (!v.high_final) {
-        expand_state(g, g->root_state, key, v, 2);
+    else if (!(v.flags & HIGH_FINAL)) {
+        expand_state(g, g->root_state, key, v, 2, MAX_DEPTH);
     }
-    else if (!v.low_final) {
-        expand_state(g, g->root_state, key, v, 3);
+    else if (!(v.flags & LOW_FINAL)) {
+        expand_state(g, g->root_state, key, v, 3, MAX_DEPTH);
     }
     else {
         return 0;
     }
     void visit(size_t key, void *value) {
-        ((graph_value *) value)->low_final &= ~TAG;
+        ((graph_value *) value)->flags &= ~TAG;
     }
     btree_traverse(g->root, g->depth, 0, visit);
     return 1;
@@ -384,14 +481,129 @@ void assume_final(graph *g) {
     void visit(size_t key, void *value) {
         graph_value v = *((graph_value*) value);
         if (v.low > VALUE_MIN) {
-            v.low_final = 1;
+            v.flags |= LOW_FINAL;
         }
         if (v.high < VALUE_MAX) {
-            v.high_final = 1;
+            v.flags |= HIGH_FINAL;
         }
         *((graph_value*) value) = v;
     }
     btree_traverse(g->root, g->depth, 0, visit);
+}
+
+// TODO: Fix finality proofs for 4x3.
+int prove(graph *g, state *s, size_t key, int mode) {
+    assert(s->passes < 2);
+    graph_value v = graph_get(g, key, (graph_value) {-g->max_score, g->max_score, 0});
+
+    if (mode == 1 || mode == 3) {
+        if (v.flags & TAG) {
+           return 1;
+       }
+        v.flags |= TAG;
+    }
+
+    if (mode == 0) {
+        v.flags |= PROVES_HIGH;
+    }
+    else if (mode == 1) {
+        v.flags |= PROVES_LOW;
+    }
+    else if (mode == 2) {
+        v.flags |= PROVES_LOW_FINAL;
+    }
+    else if (mode == 3) {
+        v.flags |= PROVES_HIGH_FINAL;
+    }
+    graph_set(g, key, v, 0);
+
+    // if (mode == 0 && v.low == VALUE_MIN) {
+    //     return 0;
+    // }
+    // if (mode == 1 && v.high == VALUE_MAX) {
+    //     return 0;
+    // }
+    state child_;
+    state *child = &child_;
+    //size_t best_key = key;
+    g->num_keys = 0;
+    state_info si = get_state_info(s);
+    for (int i = 0; i < g->num_moves; i++) {
+        *child = *s;
+        if (make_move_plus(child, si, g->move_infos[i].move)) {
+            canonize_plus(child);
+            size_t child_key = to_key_g(child);
+            if (key_in_set(g, child_key)) {
+                continue;
+            }
+            if (child->passes >= 2) {
+                continue;
+            }
+            graph_value nothing = (graph_value) {VALUE_MAX, VALUE_MIN, 0};
+            graph_value child_v = graph_get(g, child_key, nothing);
+            if (!inequal_g(child_v, nothing)) {
+                continue;
+            }
+            if (mode == 0) {
+                if (-child_v.high == v.low) {
+                    if (!prove(g, child, child_key, 1)){
+                        return 0;
+                    }
+                }
+            }
+            else if (mode == 1) {
+                prove(g, child, child_key, 0);
+            }
+            else if (mode == 2) {
+                if (-child_v.low == v.high && (child_v.flags & LOW_FINAL)) {
+                    if (!prove(g, child, child_key, 3)) {
+                        return 0;
+                    }
+                }
+            }
+            else if (mode == 3) {
+                if (-child_v.low < v.low) {
+                    prove(g, child, child_key, 0);
+                }
+                else {
+                    prove(g, child, child_key, 2);
+                }
+            }
+        }
+    }
+    // if (best_key != key) {
+    //     size_t child_key = best_key;
+    //     from_key_g(child, child_key);
+    //     graph_value child_v = graph_get(g, child_key, (graph_value) {-g->max_score, g->max_score, 0});
+    //     prove(g, child, child_key, child_v, 1);
+    // }
+    return 0;
+}
+
+void prune(graph *g) {
+    void clear_tag(size_t key, void *value) {
+        ((graph_value *) value)->flags &= ~TAG;
+    }
+
+    size_t key = to_key_g(g->root_state);
+    prove(g, g->root_state, key, 0);
+    btree_traverse(g->root, g->depth, 0, clear_tag);
+    prove(g, g->root_state, key, 1);
+    btree_traverse(g->root, g->depth, 0, clear_tag);
+    prove(g, g->root_state, key, 2);
+    btree_traverse(g->root, g->depth, 0, clear_tag);
+    prove(g, g->root_state, key, 3);
+
+    void visit(size_t key, void *value) {
+        graph_value *v = (graph_value*) value;
+        v->flags &= ~TAG;
+        if (!(v->flags & (PROVES_LOW | PROVES_HIGH | PROVES_LOW_FINAL | PROVES_HIGH_FINAL))) {
+            free(v);
+            btree_set(g->root, g->depth, key, NULL, 0);
+        }
+    }
+    btree_traverse(g->root, g->depth, 0, visit);
+    // TODO: btree_prune
 }
 
 void print_graph(graph *g) {
@@ -433,6 +645,19 @@ int main(int argc, char *argv[]) {
     }
 
     //srand(time(0));
+    pattern3_weights = malloc(PATTERN3_SIZE * sizeof(int));
+    pattern3_corner_weights = malloc(PATTERN3_SIZE * sizeof(int));
+    pattern3_edge_weights = malloc(PATTERN3_SIZE * sizeof(int));
+
+    FILE *f = fopen("pattern3_weights.dat", "rb");
+    assert(fread(pattern3_weights, sizeof(int), PATTERN3_SIZE, f));
+    fclose(f);
+    f = fopen("pattern3_corner_weights.dat", "rb");
+    assert(fread(pattern3_corner_weights, sizeof(int), PATTERN3_SIZE, f));
+    fclose(f);
+    f = fopen("pattern3_edge_weights.dat", "rb");
+    assert(fread(pattern3_edge_weights, sizeof(int), PATTERN3_SIZE, f));
+    fclose(f);
 
     state s_ = (state) {rectangle(width, height), 0, 0, 0, 0};
     state *s = &s_;
@@ -446,7 +671,7 @@ int main(int argc, char *argv[]) {
 
     init_graph(g, s);
 
-    graph_value dummy = (graph_value) {VALUE_MIN, VALUE_MAX, 0, 0};
+    graph_value dummy = (graph_value) {VALUE_MIN, VALUE_MAX, 0};
     while (expand(g)) {
         while (negamax_graph(g, 0) == 1);
         dummy = graph_get(g, 0, dummy);
@@ -461,13 +686,13 @@ int main(int argc, char *argv[]) {
         for (int i = 0; i < g->num_moves; i++) {
             *child = *g->root_state;
             graph_value child_v;
-            if (make_move_plus(child, si, g->moves[i])) {
+            if (make_move_plus(child, si, g->move_infos[i].move)) {
                 canonize_plus(child);
                 size_t child_key = to_key_g(child);
                 if (key_in_set(g, child_key)) {
                     continue;
                 }
-                child_v = graph_get(g, child_key, (graph_value) {VALUE_MIN, VALUE_MAX, 0, 0});
+                child_v = graph_get(g, child_key, (graph_value) {VALUE_MIN, VALUE_MAX, 0});
                 printf("%zu\n", child_key);
                 print_graph_node(child_v);
             }
@@ -475,6 +700,14 @@ int main(int argc, char *argv[]) {
     }
     print_state(g->root_state);
     print_graph_node(graph_get(g, 0, dummy));
+
+    prune(g);
+    print_graph_node(graph_get(g, 0, dummy));
+    assume_final(g);
+    while (negamax_graph(g, 1));
+    printf("Keys after pruning %zu\n", btree_num_keys(g->root, g->depth));
+    print_graph_node(graph_get(g, 0, dummy));
+    //print_graph(g);
 
     /*
     printf("Initial keys %zu\n", btree_num_keys(g->root, g->depth));

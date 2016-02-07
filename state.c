@@ -14,6 +14,7 @@
 #define EAST_WALL (0x20820820)
 #define WEST_BLOCK (0x1f7df7df)
 
+#define THREE_SLICE (0x7)
 #define FOUR_SLICE (0xf)
 #define FOUR_SLICE_V (0x41041)
 #define FIVE_SLICE (0x1f)
@@ -117,6 +118,20 @@ stones_t rectangle(int width, int height) {
     return r;
 }
 
+void dimensions(stones_t stones, int *width, int *height) {
+    for (int i = WIDTH - 1; i >= 0; i--) {
+        if (stones & (WEST_WALL << i)) {
+            *width = i + 1;
+            break;
+        }
+    }
+    for (int i = HEIGTH - 1; i >= 0; i--) {
+        if (stones & (NORTH_WALL << (i * V_SHIFT))) {
+            *height = i + 1;
+            break;
+        }
+    }
+}
 
 stones_t flood(register stones_t source, register stones_t target) {
     source &= target;
@@ -152,7 +167,7 @@ stones_t east(stones_t stones) {
     return (stones & WEST_BLOCK) << H_SHIFT;
 }
 
-stones_t cross (stones_t stones) {
+stones_t cross(stones_t stones) {
     return (
         ((stones & WEST_BLOCK) << H_SHIFT) |
         ((stones >> H_SHIFT) & WEST_BLOCK) |
@@ -161,7 +176,12 @@ stones_t cross (stones_t stones) {
     );
 }
 
-stones_t liberties (stones_t stones, stones_t empty) {
+stones_t blob(stones_t stones) {
+    stones |= ((stones & WEST_BLOCK) << H_SHIFT) | ((stones >> H_SHIFT) & WEST_BLOCK);
+    return stones | (stones << V_SHIFT) | (stones >> V_SHIFT);
+}
+
+stones_t liberties(stones_t stones, stones_t empty) {
     return (
         ((stones & WEST_BLOCK) << H_SHIFT) |
         ((stones >> H_SHIFT) & WEST_BLOCK) |
@@ -552,6 +572,12 @@ int main() {
 
     print_stones(0x30c30c3);
     print_stones(0x5145145);
+
+    int width;
+    int height;
+
+    dimensions(rectangle(4, 3), &width, &height);
+    printf("%d, %d\n", width, height);
 
     state_plus_test();
 

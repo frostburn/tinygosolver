@@ -1,4 +1,5 @@
 *.out
+*.dat
 solver
 inspect
 2x1

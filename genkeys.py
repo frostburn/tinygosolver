@@ -1,4 +1,4 @@
-for N, name in [(4, "FOUR"), (5, "FIVE"), (6, "SIX")]:
+for N, name in [(3, "THREE"), (4, "FOUR"), (5, "FIVE"), (6, "SIX")]:
     keys = []
     for i in range(1 << (2 * N)):
         player = i % (1 << N);
