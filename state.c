@@ -221,21 +221,24 @@ int make_move(state *s, stones_t move) {
     stones_t chain = flood(north(move), s->opponent);
     if (!liberties(chain, empty)) {
         kill |= chain;
+        s->opponent ^= chain;
     }
     chain = flood(south(move), s->opponent);
     if (!liberties(chain, empty)) {
         kill |= chain;
+        s->opponent ^= chain;
     }
     chain = flood(west(move), s->opponent);
     if (!liberties(chain, empty)) {
         kill |= chain;
+        s->opponent ^= chain;
     }
     chain = flood(east(move), s->opponent);
     if (!liberties(chain, empty)) {
         kill |= chain;
+        s->opponent ^= chain;
     }
 
-    s->opponent ^= kill;
     s->ko = 0;
     if (popcount(kill) == 1) {
         if (liberties(move, s->playing_area & ~s->opponent) == kill) {

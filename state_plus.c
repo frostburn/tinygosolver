@@ -209,6 +209,10 @@ void sort_move_infos(state *s, move_info *mis, int num_moves, int *pattern3_weig
     state *temp = &temp_;
     *temp = *s;
     for (int i = 0; i < num_moves; i++) {
+        if (mis[i].move & (s->player | s->opponent | s->ko)) {
+            mis[i].weight = -1000;
+            continue;
+        }
         if (mis[i].type == center) {
             int shift = mis[i].index - H_SHIFT - V_SHIFT;
             size_t p3 = pattern3(rshift(s->player, shift), rshift(s->opponent, shift));
