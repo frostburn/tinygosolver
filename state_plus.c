@@ -1,3 +1,5 @@
+#include "bit_matrix.c"
+
 #define MAX_CHAINS (15)
 #define PATTERN3_SIZE (19683)
 
@@ -27,7 +29,9 @@ typedef struct move_info {
     float likelyhood;
 } move_info;
 
-stones_t benson(stones_t player, stones_t opponent, stones_t playing_area) {
+
+// Has bugs. :(
+stones_t benson_alt(stones_t player, stones_t opponent, stones_t playing_area) {
     stones_t chains[MAX_CHAINS];
     stones_t regions[MAX_CHAINS];
     unsigned char neighbours[MAX_CHAINS][MAX_CHAINS];
@@ -125,6 +129,82 @@ stones_t benson(stones_t player, stones_t opponent, stones_t playing_area) {
     return unconditional;
 }
 
+stones_t benson(stones_t player, stones_t opponent, stones_t playing_area) {
+    stones_t chains[MAX_CHAINS];
+    stones_t regions[MAX_CHAINS];
+    unsigned char chain_is_dead[MAX_CHAINS];
+    int num_chains = 0;
+    int num_regions = 0;
+    stones_t chain_space = player;
+    stones_t region_space = playing_area & ~player;
+    for (int i = 0; i < MAX_CHAINS; i++) {
+        stones_t p = 3UL << (2 * i);
+        stones_t chain = flood(p, chain_space);
+        if (chain) {
+            chain_is_dead[num_chains] = 0;
+            chains[num_chains++] = chain;
+            chain_space ^= chain;
+        }
+        stones_t region = flood(p, region_space);
+        if (region) {
+            regions[num_regions++] = region;
+            region_space ^= region;
+        }
+    }
+    if (num_regions < 2) {
+        return 0;
+    }
+
+    // Matrix of neighbourhood: region i borders chain j
+    // stacked on top of matrix of vitality: region i is vital to chain j + num_chains
+    bit_matrix *props = bit_matrix_new(num_regions, 2 * num_chains);
+
+    // TODO: i for horizontal axis.
+    for (int i = 0; i < num_chains; i++) {
+        stones_t chain_cross = cross(chains[i]);
+        stones_t far_empty = ~opponent & ~chain_cross;
+        for (int j = 0; j < num_regions; j++) {
+            if (regions[j] & chain_cross){
+                bit_matrix_set(props, j, i);
+                if (!(regions[j] & far_empty)) {
+                    bit_matrix_set(props, j, i + num_chains);
+                }
+            }
+        }
+    }
+
+    // print_bit_matrix(props);
+
+    int quiet_time = 0;
+    while (quiet_time++ < num_chains) {
+        for (int i = 0; i < num_chains; i++) {
+            if (chain_is_dead[i]) {
+                continue;
+            }
+            if (bit_matrix_row_popcount(props, i + num_chains) < 2) {
+                chain_is_dead[i] = 1;
+                quiet_time = 0;
+                bit_matrix_clear_columns_by_row(props, i);
+            }
+        }
+    }
+
+    stones_t unconditional = 0;
+    for (int i = 0; i < num_chains; i++) {
+        bit_matrix_clear_row(props, i);
+        if (bit_matrix_row_nonzero(props, i + num_chains)) {
+            unconditional |= chains[i];
+        }
+    }
+    for (int j = 0; j < num_regions; j++) {
+        if (bit_matrix_column_nonzero(props, j)) {
+            unconditional |= regions[j];
+        }
+    }
+    bit_matrix_free(props);
+    return unconditional;
+}
+
 stones_t rshift(stones_t stones, int shift) {
     if (shift < 0) {
         return stones << (-shift);
@@ -151,6 +231,13 @@ state_info get_state_info(state *s) {
     state_info si;
     si.player_unconditional = benson(s->player, s->opponent, s->playing_area);
     si.opponent_unconditional = benson(s->opponent, s->player, s->playing_area);
+
+    // stones_t pu = benson_alt(s->player, s->opponent, s->playing_area);
+    // stones_t ou = benson_alt(s->opponent, s->player, s->playing_area);
+    // print_state(s);
+    // assert(si.player_unconditional == pu);
+    // assert(si.opponent_unconditional == ou);
+
     return si;
 }
 

@@ -88,6 +88,7 @@ void queue_push_front(key_queue *q, size_t key, int mode) {
 }
 
 void queue_pop_front(key_queue *q, size_t *key, int *mode) {
+    assert(q->front != NULL);
     *key = q->front->key;
     *mode = q->front->mode;
     key_item *front = q->front;
@@ -442,7 +443,7 @@ void do_expand(graph *g, int mode) {
             queue_pop_front(q, &key, &mode);
             from_key_g(g, s, key);
             assert(s->passes < 2);
-            printf("%zu, %d, %d\n", key, mode, s->passes);
+            //printf("%zu, %d, %d\n", key, mode, s->passes);
             if (mode == 1 || mode == 3) {
                 if (add_tag(g, key)) {
                     continue;
@@ -481,10 +482,10 @@ void do_expand(graph *g, int mode) {
                         continue;
                     }
                     if (mode == 3) {
-                        if ((child_v.flags & HIGH_FINAL) || -child_v.low < v.low) {
-                            // TODO: Find out why this fails.
-                            continue;
-                        }
+                        // if ((child_v.flags & HIGH_FINAL) || -child_v.low < v.low) {
+                        //     // TODO: Find out why this fails.
+                        //     continue;
+                        // }
                     }
                     if (graph_set(g, child_key, child_v, 1)) {
                         expansions++;
