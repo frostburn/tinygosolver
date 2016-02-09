@@ -244,7 +244,7 @@ graph_value graph_get(graph *g, size_t key, graph_value default_) {
 void init_graph(graph *g, state *s) {
     g->root_state = s;
     g->max_score = popcount(s->playing_area);
-    g->max_score = VALUE_MAX;
+    // g->max_score = VALUE_MAX;
     g->num_moves = 1;
     g->move_infos[0] = (move_info) {0, -1, pass, 0, 0};
     int width = 0;
@@ -323,16 +323,21 @@ size_t to_key_g(state *s) {
     return key;
 }
 
-int negamax_node(graph *g, size_t key, graph_value old_v, int mode) {
+graph_value negamax_node(graph *g, size_t key, int depth, int *changed) {
     state s_;
     state *s = &s_;
     state child_;
     state *child = &child_;
     from_key_g(g, s, key);
     if (s->passes >= 2) {
-        return 0;
-        // value_t score = liberty_score(s);
-        // return graph_set(g, key, (graph_value) {score, score, 1, 1}, 0);
+        value_t score = liberty_score_plus(s);
+        return (graph_value) {score, score, LOW_FINAL | HIGH_FINAL};
+    }
+    if (s->passes) {
+        depth++;
+    }
+    if (depth == 0) {
+        return graph_get(g, key, (graph_value) {-g->max_score, g->max_score, 0});
     }
     graph_value v = (graph_value) {VALUE_MIN, VALUE_MIN, LOW_FINAL};
     state_info si = get_state_info(s);
@@ -342,13 +347,7 @@ int negamax_node(graph *g, size_t key, graph_value old_v, int mode) {
         if (make_move_plus(child, si, g->move_infos[i].move)) {
             canonize_plus(child);
             size_t child_key = to_key_g(child);
-            if (child->passes >= 2) {
-                value_t score = liberty_score_plus(child);
-                child_v = (graph_value) {score, score, LOW_FINAL | HIGH_FINAL};
-            }
-            else {
-                child_v = graph_get(g, child_key, (graph_value) {-g->max_score, g->max_score, 0});
-            }
+            child_v = negamax_node(g, child_key, depth - 1, NULL);
             v = negamax_value(v, child_v);
         }
     }
@@ -357,14 +356,17 @@ int negamax_node(graph *g, size_t key, graph_value old_v, int mode) {
     //     v.low_final = v.low_final && old_v.low_final;
     //     v.high_final = v.high_final && old_v.high_final;
     // }
-    int changed = graph_set(g, key, v, 0);
-    return changed;
+    if (changed != NULL) {
+        *changed = graph_set(g, key, v, 0);
+    }
+    return v;
 }
 
 int negamax_graph(graph *g, int mode) {
     int changed = 0;
     void visit(size_t key, void *value) {
-        int change = negamax_node(g, key, *((graph_value*) value), mode);
+        int change;
+        negamax_node(g, key, 1, &change);
         if (change == 2 && changed == 0) {
             changed = 2;
         }
@@ -418,6 +420,9 @@ void expand_node(graph *g, size_t key) {
 int add_tag(graph *g, size_t key) {
     graph_value *value;
     value = (graph_value*) btree_get(g->root, g->depth, key);
+    if (value == NULL) {
+        return 0;
+    }
     int tagged = value->flags & TAG;
     value->flags |= TAG;
     return tagged;
@@ -454,9 +459,10 @@ void do_expand(graph *g, int mode) {
             }
             g->num_keys = 0;
             state_info si = get_state_info(s);
-            graph_value nothing = (graph_value) {VALUE_MAX, VALUE_MIN, 0};
-            graph_value v = graph_get(g, key, nothing);
-            assert(inequal_g(v, nothing));
+            // graph_value nothing = (graph_value) {VALUE_MAX, VALUE_MIN, 0};
+            // graph_value v = graph_get(g, key, nothing);
+            // assert(inequal_g(v, nothing));
+            graph_value v = negamax_node(g, key, 0, NULL);
             int found_one = 0;
             for (int i = 0; i < g->num_moves; i++) {
                 *child = *s;
@@ -469,7 +475,8 @@ void do_expand(graph *g, int mode) {
                     if (child->passes >= 2) {
                         continue;
                     }
-                    graph_value child_v = graph_get(g, child_key, (graph_value) {-g->max_score, g->max_score, 0});
+                    // graph_value child_v = graph_get(g, child_key, (graph_value) {-g->max_score, g->max_score, 0});
+                    graph_value child_v = negamax_node(g, child_key, 0, NULL);
                     if (mode == 0 && (child_v.flags & TAG)) {
                         continue;
                     }
@@ -486,6 +493,9 @@ void do_expand(graph *g, int mode) {
                         //     // TODO: Find out why this fails.
                         //     continue;
                         // }
+                        if (child_v.flags & HIGH_FINAL) {
+                            continue;
+                        }
                     }
                     if (graph_set(g, child_key, child_v, 1)) {
                         expansions++;
