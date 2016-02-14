@@ -34,6 +34,8 @@ typedef struct graph_value
     value_t low;
     value_t high;
     unsigned char flags;
+    value_t h_low;
+    value_t h_high;
 } graph_value;
 
 typedef struct graph
@@ -121,6 +123,7 @@ void print_graph_node(graph_value v) {
     if (v.flags & HIGH_FINAL) {
         printf("f");
     }
+    printf(", h_low = %d h_high = %d", v.h_low, v.h_high);
     if (v.flags & TAG) {
         printf(" tagged");
     }
@@ -139,7 +142,7 @@ void print_graph_node(graph_value v) {
     printf("\n");
 }
 
-graph_value negamax_value(graph_value parent, graph_value child) {;
+graph_value negamax_value(graph_value parent, graph_value child) {
     if (-child.high > parent.low) {
         parent.low = -child.high;
     }
@@ -178,6 +181,13 @@ graph_value negamax_value(graph_value parent, graph_value child) {;
         // parent.high_final = 1;
         parent.flags |= LOW_FINAL | HIGH_FINAL;
     }
+
+    if (-child.h_high > parent.h_low) {
+        parent.h_low = -child.h_high;
+    }
+    if (-child.h_low > parent.h_high) {
+        parent.h_high = -child.h_low;
+    }
     return parent;
 }
 
@@ -196,6 +206,12 @@ int inequal_g(graph_value a, graph_value b) {
     // }
     if ((a.flags ^ b.flags) & (LOW_FINAL | HIGH_FINAL)) {
         return 2;
+    }
+    if (a.h_low != b.h_low) {
+        return 3;
+    }
+    if (a.h_high != b.h_high) {
+        return 3;
     }
     return 0;
 }
@@ -241,54 +257,23 @@ graph_value graph_get(graph *g, size_t key, graph_value default_) {
     return *value;
 }
 
+graph_value graph_h_get(graph *g, size_t key, state *s, state_info si) {
+    graph_value *value;
+    value = (graph_value*) btree_get(g->root, g->depth, key);
+    if (value == NULL) {
+        int lower_bound, upper_bound;
+        get_score_bounds(s, si, &lower_bound, &upper_bound);
+        value_t h_score = heuristic_score(s);
+        return (graph_value) {lower_bound, upper_bound, 0, h_score, h_score};
+    }
+    return *value;
+}
+
 void init_graph(graph *g, state *s) {
     g->root_state = s;
     g->max_score = popcount(s->playing_area);
     // g->max_score = VALUE_MAX;
-    g->num_moves = 1;
-    g->move_infos[0] = (move_info) {0, -1, pass, 0, 0};
-    int width = 0;
-    int height = 0;
-    dimensions(s->playing_area, &width, &height);
-    width -= 1;
-    height -= 1;
-    for (int i = 0; i < STATE_SIZE; i++) {
-        stones_t move = 1ULL << i;
-        move_type type = center;
-        int x = i % WIDTH;
-        int y = i / WIDTH;
-        if (x == 0) {
-            if (y == 0) {
-                type = corner_nw;
-            }
-            else if (y == height) {
-                type = corner_sw;
-            }
-            else {
-                type = edge_w;
-            }
-        }
-        else if (x == width) {
-            if (y == 0) {
-                type = corner_ne;
-            }
-            else if (y == height) {
-                type = corner_se;
-            }
-            else {
-                type = edge_e;
-            }
-        }
-        else if (y == 0) {
-            type = edge_n;
-        }
-        else if (y == height) {
-            type = edge_s;
-        }
-        if (move & s->playing_area) {
-            g->move_infos[g->num_moves++] = (move_info) {move, i, type, 0, 0};
-        }
-    }
+    g->num_moves = get_move_infos(s, g->move_infos);
     size_t key_max = (max_key(s) + 1) * KEY_MUL;
     g->depth = 0;
     while (key_max) {
@@ -296,7 +281,7 @@ void init_graph(graph *g, state *s) {
         g->depth++;
     }
     g->root = (vertex*) calloc(1, sizeof(vertex));
-    graph_set(g, to_key(s) * KEY_MUL, (graph_value) {-g->max_score, g->max_score, 0}, 0);
+    graph_set(g, to_key(s) * KEY_MUL, (graph_value) {-g->max_score, g->max_score, 0, VALUE_MIN, VALUE_MAX}, 0);
 }
 
 void from_key_g(graph *g, state *s, size_t key) {
@@ -331,16 +316,17 @@ graph_value negamax_node(graph *g, size_t key, int depth, int *changed) {
     from_key_g(g, s, key);
     if (s->passes >= 2) {
         value_t score = liberty_score_plus(s);
-        return (graph_value) {score, score, LOW_FINAL | HIGH_FINAL};
+        value_t h_score = heuristic_score(s);
+        return (graph_value) {score, score, LOW_FINAL | HIGH_FINAL, h_score, h_score};
     }
     if (s->passes) {
         depth++;
     }
-    if (depth == 0) {
-        return graph_get(g, key, (graph_value) {-g->max_score, g->max_score, 0});
-    }
-    graph_value v = (graph_value) {VALUE_MIN, VALUE_MIN, LOW_FINAL};
     state_info si = get_state_info(s);
+    if (depth == 0) {
+        return graph_h_get(g, key, s, si);
+    }
+    graph_value v = (graph_value) {VALUE_MIN, VALUE_MIN, LOW_FINAL, VALUE_MIN, VALUE_MIN};
     for (int i = 0; i < g->num_moves; i++) {
         *child = *s;
         graph_value child_v;
@@ -376,20 +362,6 @@ int negamax_graph(graph *g, int mode) {
     }
     btree_traverse(g->root, g->depth, 0, visit);
     return changed;
-}
-
-void use_heuristic_move(graph *g, state *s) {
-#ifdef RANDOM_HEURISTIC
-    size_t n = g->num_moves;
-    for (size_t i = 0; i < n - 1; i++) {
-      size_t j = i + rand() / (RAND_MAX / (n - i) + 1);
-      move_info t = g->move_infos[j];
-      g->move_infos[j] = g->move_infos[i];
-      g->move_infos[i] = t;
-    }
-#else
-    sort_move_infos(s, g->move_infos, g->num_moves, pattern3_weights, pattern3_corner_weights, pattern3_edge_weights);
-#endif
 }
 
 void expand_node(graph *g, size_t key) {
@@ -428,6 +400,32 @@ int add_tag(graph *g, size_t key) {
     return tagged;
 }
 
+void use_heuristic_move(graph *g, state *s, state_info si) {
+#ifdef RANDOM_HEURISTIC
+    size_t n = g->num_moves;
+    for (size_t i = 0; i < n - 1; i++) {
+      size_t j = i + rand() / (RAND_MAX / (n - i) + 1);
+      move_info t = g->move_infos[j];
+      g->move_infos[j] = g->move_infos[i];
+      g->move_infos[i] = t;
+    }
+#else
+    sort_move_infos(s, g->move_infos, g->num_moves, pattern3_weights, pattern3_corner_weights, pattern3_edge_weights);
+    state child_;
+    state *child = &child_;
+    for (int i = 0; i < g->num_moves; i++) {
+        *child = *s;
+        if (make_move_plus(child, si, g->move_infos[i].move)) {
+            canonize_plus(child);
+            size_t child_key = to_key_g(child);
+            graph_value child_v = negamax_node(g, child_key, 0, NULL);
+            g->move_infos[i].weight = 3 * g->move_infos[i].weight - 2 * child_v.h_high + (rand() / (RAND_MAX / 3));
+        }
+    }
+    qsort((void*) g->move_infos, g->num_moves, sizeof(move_info), compare_weight);
+#endif
+}
+
 void do_expand(graph *g, int mode) {
     size_t key = to_key_g(g->root_state);
     key_queue q_ = (key_queue) {NULL, NULL};
@@ -454,11 +452,11 @@ void do_expand(graph *g, int mode) {
                     continue;
                 }
             }
+            state_info si = get_state_info(s);
             if (mode == 0 || mode == 2) {
-                use_heuristic_move(g, s);
+                use_heuristic_move(g, s, si);
             }
             g->num_keys = 0;
-            state_info si = get_state_info(s);
             // graph_value nothing = (graph_value) {VALUE_MAX, VALUE_MIN, 0};
             // graph_value v = graph_get(g, key, nothing);
             // assert(inequal_g(v, nothing));
@@ -566,6 +564,16 @@ int expand(graph *g) {
 void sporadic_expand(graph *g) {
     void visit(size_t key, void *value) {
         expand_node(g, key);
+    }
+    btree_traverse(g->root, g->depth, 0, visit);
+}
+
+void clear_heuristics(graph *g) {
+    void visit(size_t key, void *value) {
+        graph_value v = *((graph_value*) value);
+        v.h_low = VALUE_MIN;
+        v.h_high = VALUE_MAX;
+        *((graph_value*) value) = v;
     }
     btree_traverse(g->root, g->depth, 0, visit);
 }
@@ -767,6 +775,7 @@ int main(int argc, char *argv[]) {
     graph_value dummy = (graph_value) {VALUE_MIN, VALUE_MAX, 0};
     while (expand(g)) {
         assert(g->root_state->playing_area == rectangle(width, height));
+        clear_heuristics(g);
         while (negamax_graph(g, 0) == 1);
         dummy = graph_get(g, 0, dummy);
         if (dummy.low > VALUE_MIN && dummy.high < VALUE_MAX) {

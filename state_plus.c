@@ -1,7 +1,10 @@
+#include <limits.h>
 #include "bit_matrix.c"
 
 #define MAX_CHAINS (15)
 #define PATTERN3_SIZE (19683)
+
+#define WEIGHT_MIN INT_MIN
 
 typedef enum move_type {
     center,
@@ -205,6 +208,89 @@ stones_t benson(stones_t player, stones_t opponent, stones_t playing_area) {
     return unconditional;
 }
 
+int block_size(stones_t stones, stones_t *middle) {
+    int count = popcount(stones);
+    if (count == 0) {
+        return 0;
+    }
+    else if (count == 1) {
+        return 1;
+    }
+    else if (count == 2) {
+        if ((stones & west(stones)) || (stones & north(stones))) {
+            return 2;
+        }
+    }
+    else if (count == 3) {
+        stones_t temp = stones & north(stones);
+        *middle = temp & south(stones);
+        if (*middle) {
+            return 3;  // vertical straight three
+        }
+        *middle = temp & west(stones);
+        if (*middle) {
+            return 3;  // Gamma
+        }
+        *middle = temp & east(stones);
+        if (*middle) {
+            return 3;  // 7
+        }
+        temp = west(stones) & stones;
+        *middle = temp & east(stones);
+        if (*middle) {
+            return 3;  // horizontal straight three
+        }
+        *middle = temp & south(stones);
+        if (*middle) {
+            return 3;  // L
+        }
+        *middle = east(stones) & stones & south(stones);
+        if (*middle) {
+            return 3;  // J
+        }
+    }
+    // TODO: four-blocks
+    return -1;
+}
+
+stones_t unconditional_territory(stones_t player, stones_t opponent, stones_t playing_area) {
+    stones_t player_unconditional = benson(player, opponent, playing_area);
+    if (!player_unconditional) {
+        return 0;
+    }
+    stones_t region_space = playing_area & ~player_unconditional;
+    stones_t pu_cross = cross(player_unconditional);
+    for (int i = 0; i < MAX_CHAINS; i++) {
+        stones_t region = flood(3UL << (2 * i), region_space);
+        if (region) {
+            stones_t eyespace = region & ~pu_cross;
+            stones_t middle;
+            int bs = block_size(eyespace, &middle);
+            if (bs < 3) {
+                player_unconditional |= region;
+                continue;
+            }
+            else if (bs == 3) {
+                if (player & middle) {
+                    player_unconditional |= region;
+                    continue;
+                }
+            }
+            else if (bs == 4) {
+                if ((player & region) == middle) {
+                    if (popcount(liberties(player & eyespace, playing_area & ~opponent)) < 4) {
+                        player_unconditional |= region;
+                        continue;
+                    }
+                    // TODO: 4 liberties.
+                }
+            }
+            region_space ^= region;
+        }
+    }
+    return player_unconditional;
+}
+
 stones_t rshift(stones_t stones, int shift) {
     if (shift < 0) {
         return stones << (-shift);
@@ -229,8 +315,8 @@ size_t pattern3(stones_t player, stones_t opponent) {
 
 state_info get_state_info(state *s) {
     state_info si;
-    si.player_unconditional = benson(s->player, s->opponent, s->playing_area);
-    si.opponent_unconditional = benson(s->opponent, s->player, s->playing_area);
+    si.player_unconditional = unconditional_territory(s->player, s->opponent, s->playing_area);
+    si.opponent_unconditional = unconditional_territory(s->opponent, s->player, s->playing_area);
 
     // stones_t pu = benson_alt(s->player, s->opponent, s->playing_area);
     // stones_t ou = benson_alt(s->opponent, s->player, s->playing_area);
@@ -239,6 +325,54 @@ state_info get_state_info(state *s) {
     // assert(si.opponent_unconditional == ou);
 
     return si;
+}
+
+int get_move_infos(state *s, move_info *move_infos) {
+    int num_moves = 1;
+    move_infos[0] = (move_info) {0, -1, pass, 0, 0};
+    int width = 0;
+    int height = 0;
+    dimensions(s->playing_area, &width, &height);
+    width -= 1;
+    height -= 1;
+    for (int i = 0; i < STATE_SIZE; i++) {
+        stones_t move = 1ULL << i;
+        move_type type = center;
+        int x = i % WIDTH;
+        int y = i / WIDTH;
+        if (x == 0) {
+            if (y == 0) {
+                type = corner_nw;
+            }
+            else if (y == height) {
+                type = corner_sw;
+            }
+            else {
+                type = edge_w;
+            }
+        }
+        else if (x == width) {
+            if (y == 0) {
+                type = corner_ne;
+            }
+            else if (y == height) {
+                type = corner_se;
+            }
+            else {
+                type = edge_e;
+            }
+        }
+        else if (y == 0) {
+            type = edge_n;
+        }
+        else if (y == height) {
+            type = edge_s;
+        }
+        if (move & s->playing_area) {
+            move_infos[num_moves++] = (move_info) {move, i, type, 0, 0};
+        }
+    }
+    return num_moves;
 }
 
 void print_state_info(state_info si) {
@@ -260,6 +394,7 @@ void canonize_plus(state *s) {
 }
 
 int make_move_plus(state *s, state_info si, stones_t move) {
+#ifdef BLOCK_PASSES
     if (!move) {
         // Don't pass before filling at least third of the board.
         if (3 * popcount(s->player | s->opponent) < popcount(s->playing_area)) {
@@ -270,6 +405,7 @@ int make_move_plus(state *s, state_info si, stones_t move) {
             return 0;
         }
     }
+#endif
     if (move & (si.player_unconditional | si.opponent_unconditional)) {
         return 0;
     }
@@ -285,6 +421,11 @@ int liberty_score_plus(state *s) {
     return popcount(player_controlled) - popcount(opponent_controlled);
 }
 
+void get_score_bounds(state *s, state_info si, int *lower_bound, int *upper_bound) {
+    *lower_bound = popcount(si.player_unconditional) - popcount(s->playing_area & ~si.player_unconditional);
+    *upper_bound = popcount(s->playing_area & ~si.opponent_unconditional) - popcount(si.opponent_unconditional);
+}
+
 int compare_weight(const void *a_, const void *b_) {
     move_info *a = (move_info*) a_;
     move_info *b = (move_info*) b_;
@@ -297,7 +438,7 @@ void sort_move_infos(state *s, move_info *mis, int num_moves, int *pattern3_weig
     *temp = *s;
     for (int i = 0; i < num_moves; i++) {
         if (mis[i].move & (s->player | s->opponent | s->ko)) {
-            mis[i].weight = -1000;
+            mis[i].weight = WEIGHT_MIN;
             continue;
         }
         if (mis[i].type == center) {
@@ -358,6 +499,34 @@ void sort_move_infos(state *s, move_info *mis, int num_moves, int *pattern3_weig
     // for (int i = 0; i < num_moves; i++) { printf("%d %d\n", mis[i].weight, mis[i].index);}
 }
 
+int euler(stones_t stones) {
+    stones_t temp = stones | west(stones);
+    int characteristic = -popcount(stones & WEST_WALL);  // western vertical edges
+    characteristic -= popcount(temp); // rest of the vertical edges
+    characteristic += stones & 1UL;  // northwestern vertex
+    characteristic += popcount(temp & NORTH_WALL);  // northern vertices
+    characteristic += popcount(temp | north(temp));  // rest of the vertices
+    temp = stones | north(stones);
+    characteristic += popcount(temp & WEST_WALL);  // western vertices
+    characteristic -= popcount(stones & NORTH_WALL);  // northern horizontal edges
+    characteristic -= popcount(temp);  // rest of the horizontal edges
+    characteristic += popcount(stones);  // pixels
+
+    return characteristic;
+}
+
+int _heuristic_score(stones_t player, stones_t opponent, stones_t playing_area) {
+    int score = popcount(cross(player) & playing_area & ~opponent);
+    score -= euler(player);
+    score *= 2;
+    score -= popcount(player & cross(playing_area));
+    return score;
+}
+
+int heuristic_score(state *s) {
+    return _heuristic_score(s->player, s->opponent, s->playing_area) - _heuristic_score(s->opponent, s->player, s->playing_area);
+}
+
 int state_plus_test() {
     stones_t a = 376873877;
     stones_t b = (1UL << (2 * V_SHIFT)) | (1UL << (4 * H_SHIFT + V_SHIFT));
@@ -365,5 +534,14 @@ int state_plus_test() {
     print_stones(b);
     stones_t u = benson(a, b, rectangle(6, 5));
     print_stones(u);
+
+    for (int i = 0; i < STATE_SIZE; i++) {
+        assert(euler(1UL << i) == 1);
+        if (i % WIDTH < WIDTH - 1) {
+            assert(euler(3UL << i) == 1);
+        }
+    }
+    assert(euler(rectangle(3, 3) ^ 1UL << (H_SHIFT + V_SHIFT)) == 0);
+
     return 0;
 }
